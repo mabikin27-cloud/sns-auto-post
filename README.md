@@ -68,3 +68,7 @@ LINE の Webhook URL に `https://あなたのサービス名.onrender.com/webho
 4. 生成結果を LINE の Push で 3 通（Instagram用 / LINE用 / ブログ用）送信
 
 設定シートが読めない場合は「設定シートを確認してください。」と LINE で通知します。
+
+## 429 エラー（レート制限）
+
+「現在の割り当てを超えました」と出る場合は、Gemini API の無料枠の制限に達しています。約1分待ってから再度送信してください。429 のときは 1 回だけ 60 秒後に自動で再試行します。詳細は https://ai.google.dev/gemini-api/docs/rate-limits を参照してください。

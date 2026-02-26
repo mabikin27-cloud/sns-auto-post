@@ -3,6 +3,7 @@ SNS投稿案生成ロジック: Gemini API と Google スプレッドシート�
 """
 import os
 import json
+import time
 import traceback
 from datetime import datetime
 
@@ -161,8 +162,29 @@ def generate_posts(neta: str) -> dict:
 
 見出し以外に余計な説明は書かず、各見出しの直後に投稿文のみを書いてください。"""
 
+    response = None
+    last_error = None
+    for attempt in range(2):
+        try:
+            response = model.generate_content(prompt)
+            break
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+            is_429 = "429" in err_str or "resourceexhausted" in type(e).__name__.lower()
+            if is_429 and attempt == 0:
+                wait_sec = 60
+                print(f"[WARN] Gemini レート制限(429)。{wait_sec}秒後に再試行します...")
+                time.sleep(wait_sec)
+                continue
+            print(f"[ERROR] Gemini 生成エラー: {e}")
+            print(traceback.format_exc())
+            ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
+            raise
+    if response is None:
+        raise last_error or ValueError("Gemini から応答がありませんでした")
+
     try:
-        response = model.generate_content(prompt)
         # ブロック・空応答の場合は .text が取得できない／例外になることがある
         try:
             text = (response.text or "").strip()

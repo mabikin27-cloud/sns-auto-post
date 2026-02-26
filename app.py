@@ -170,9 +170,14 @@ def webhook():
         except Exception as e:
             print(f"[ERROR] 生成エラー: {e}")
             print(traceback.format_exc())
+            err_msg = str(e)
+            if "429" in err_msg or "割り当て" in err_msg or "resourceexhausted" in err_msg.lower():
+                push_msg = "リクエスト制限に達しました。しばらく（約1分）待ってからもう一度お試しください。"
+            else:
+                push_msg = "投稿案の生成中にエラーが発生しました。しばらくしてからもう一度お試しください。"
             _push_message(
                 event.get("source", {}).get("userId") or "",
-                "投稿案の生成中にエラーが発生しました。しばらくしてからもう一度お試しください。",
+                push_msg,
             )
 
     return "OK", 200
