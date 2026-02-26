@@ -3,7 +3,7 @@ SNS投稿案生成ロジック: Gemini API と Google スプレッドシート�
 """
 import os
 import json
-import tempfile
+import traceback
 from datetime import datetime
 
 import gspread
@@ -161,9 +161,29 @@ def generate_posts(neta: str) -> dict:
 
     try:
         response = model.generate_content(prompt)
-        text = response.text.strip()
+        # ブロック・空応答の場合は .text が取得できない／例外になることがある
+        try:
+            text = (response.text or "").strip()
+        except (ValueError, AttributeError) as e:
+            print(f"[ERROR] Gemini 応答テキスト取得失敗: {e}")
+            reason = "応答を取得できませんでした"
+            if getattr(response, "prompt_feedback", None):
+                reason = str(response.prompt_feedback)
+            if response.candidates:
+                c = response.candidates[0]
+                if getattr(c, "finish_reason", None):
+                    reason = str(c.finish_reason)
+            ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
+            raise ValueError(f"Gemini: {reason}") from e
+        if not text:
+            print("[ERROR] Gemini の応答テキストが空です")
+            ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
+            raise ValueError("Gemini の応答が空でした")
+    except ValueError:
+        raise
     except Exception as e:
         print(f"[ERROR] Gemini 生成エラー: {e}")
+        print(traceback.format_exc())
         ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
         raise
 

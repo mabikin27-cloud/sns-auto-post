@@ -6,6 +6,7 @@ import base64
 import hmac
 import hashlib
 import os
+import traceback
 
 from flask import Flask, request, abort
 from dotenv import load_dotenv
@@ -168,6 +169,7 @@ def webhook():
             )
         except Exception as e:
             print(f"[ERROR] 生成エラー: {e}")
+            print(traceback.format_exc())
             _push_message(
                 event.get("source", {}).get("userId") or "",
                 "投稿案の生成中にエラーが発生しました。しばらくしてからもう一度お試しください。",
