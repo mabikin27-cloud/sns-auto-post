@@ -141,7 +141,9 @@ def generate_posts(neta: str) -> dict:
         raise ValueError("GEMINI_API_KEY が設定されていません")
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # モデル名: gemini-2.0-flash は v1beta で利用可能。gemini-1.5-flash は 404 になる場合あり。
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = genai.GenerativeModel(model_name)
 
     prompt = f"""以下はSNS・ブログ用の投稿ネタです。このネタをもとに、次の3種類の投稿文を生成してください。
 
