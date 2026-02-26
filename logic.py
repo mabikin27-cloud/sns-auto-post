@@ -24,21 +24,29 @@ class SettingsSheetError(Exception):
 
 
 def _get_credentials():
-    """環境変数からサービスアカウント認証を取得（ファイル or JSON 文字列）"""
-    json_str = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    """環境変数からサービスアカウント認証を取得（GOOGLE_CREDENTIALS_JSON / GCP_SERVICE_ACCOUNT_JSON またはファイル）"""
+    json_str = os.environ.get("GOOGLE_CREDENTIALS_JSON") or os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
     if json_str:
         try:
             info = json.loads(json_str)
             creds = Credentials.from_service_account_info(info, scopes=SCOPES)
             return creds
-        except (json.JSONDecodeError, Exception) as e:
-            print(f"[ERROR] GOOGLE_CREDENTIALS_JSON の解析に失敗: {e}")
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] 認証 JSON の解析に失敗（GOOGLE_CREDENTIALS_JSON / GCP_SERVICE_ACCOUNT_JSON）: {e}")
+            raise ValueError("GOOGLE_CREDENTIALS_JSON または GCP_SERVICE_ACCOUNT_JSON の JSON 形式が不正です") from e
+        except Exception as e:
+            print(f"[ERROR] 認証の読み込みに失敗: {e}")
             raise
     path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service_account.json")
     if not os.path.isfile(path):
+        print(f"[ERROR] 認証ファイルが見つかりません: {path}")
         raise FileNotFoundError(f"認証ファイルが見つかりません: {path}")
-    creds = Credentials.from_service_account_file(path, scopes=SCOPES)
-    return creds
+    try:
+        creds = Credentials.from_service_account_file(path, scopes=SCOPES)
+        return creds
+    except Exception as e:
+        print(f"[ERROR] 認証ファイルの読み込みに失敗: {e}")
+        raise
 
 
 def _get_persona(ws_settings):

@@ -2,6 +2,9 @@
 LINE Webhook サーバー（Flask）
 ユーザーが送った「ネタ」を受け取り、SNS投稿案を生成して返信する。
 """
+import base64
+import hmac
+import hashlib
 import os
 
 from flask import Flask, request, abort
@@ -15,6 +18,27 @@ app = Flask(__name__)
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
+
+
+def _log_env_status():
+    """起動時に環境変数の状態をログ出力（エラーハンドリング用）。"""
+    missing = []
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        missing.append("LINE_CHANNEL_ACCESS_TOKEN")
+    if not LINE_CHANNEL_SECRET:
+        missing.append("LINE_CHANNEL_SECRET")
+    if missing:
+        print(f"[WARN] 未設定の環境変数: {', '.join(missing)}")
+    creds_var = os.environ.get("GOOGLE_CREDENTIALS_JSON") or os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_var and not creds_path:
+        print("[WARN] Google 認証が未設定です（GOOGLE_CREDENTIALS_JSON / GCP_SERVICE_ACCOUNT_JSON / GOOGLE_APPLICATION_CREDENTIALS）")
+    elif creds_path and not os.path.isfile(creds_path):
+        print(f"[WARN] 認証ファイルが見つかりません: {creds_path}")
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("[WARN] GEMINI_API_KEY が未設定です")
+    if not os.environ.get("SPREADSHEET_ID"):
+        print("[WARN] SPREADSHEET_ID が未設定です")
 
 
 def reply_line(reply_token: str, messages: list) -> bool:
@@ -37,18 +61,20 @@ def reply_line(reply_token: str, messages: list) -> bool:
 
 
 def validate_signature(body: bytes, signature: str) -> bool:
-    """LINE Webhook の署名検証。"""
-    import hmac
-    import hashlib
-    if not LINE_CHANNEL_SECRET:
+    """LINE Webhook の署名検証（X-Line-Signature は Base64 エンコードされた HMAC-SHA256）。"""
+    if not LINE_CHANNEL_SECRET or not signature:
         return False
-    hash_val = hmac.new(
-        LINE_CHANNEL_SECRET.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).digest()
-    expected = hash_val.hex()
-    return hmac.compare_digest(expected, signature)
+    try:
+        hash_val = hmac.new(
+            LINE_CHANNEL_SECRET.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).digest()
+        expected = base64.b64encode(hash_val).decode("utf-8")
+        return hmac.compare_digest(expected, signature)
+    except Exception as e:
+        print(f"[ERROR] 署名検証の計算に失敗: {e}")
+        return False
 
 
 def _push_message(user_id: str, text: str) -> bool:
@@ -78,17 +104,19 @@ def index():
     return "SNS投稿案生成 Bot は稼働中です。"
 
 
-@app.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
-    """LINE からの Webhook を受信する。"""
-    if request.method != "POST":
+    """LINE からの Webhook を受信する。検証リクエスト（GET）には必ず 200 OK を返す。"""
+    # LINE の Webhook URL 検証リクエストは GET で送られるため、必ず 200 を返す
+    if request.method == "GET":
+        print("[INFO] LINE 検証リクエスト（GET）を受信。200 OK を返します。")
         return "OK", 200
 
     body = request.get_data()
     signature = request.headers.get("X-Line-Signature", "")
 
     if LINE_CHANNEL_SECRET and not validate_signature(body, signature):
-        print("[ERROR] 署名検証に失敗しました")
+        print("[ERROR] 署名検証に失敗しました（X-Line-Signature と一致しません）")
         abort(403)
 
     payload = request.get_json(silent=True)
@@ -147,6 +175,9 @@ def webhook():
 
     return "OK", 200
 
+
+# gunicorn 等でアプリ読み込み時に環境変数状態をログ
+_log_env_status()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
