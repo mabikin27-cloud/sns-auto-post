@@ -72,3 +72,6 @@ LINE の Webhook URL に `https://あなたのサービス名.onrender.com/webho
 ## 429 エラー（レート制限）
 
 「現在の割り当てを超えました」と出る場合は、Gemini API の無料枠の制限に達しています。約1分待ってから再度送信してください。429 のときは 1 回だけ 60 秒後に自動で再試行します。詳細は https://ai.google.dev/gemini-api/docs/rate-limits を参照してください。
+
+- **リクエスト間隔**: 前回から 7 秒経過するまで待ってから Gemini を呼び出します。`GEMINI_MIN_INTERVAL_SECONDS` で変更可（例: 10 で約 6 RPM）。
+- **429 時**: 最大 3 回まで再試行。エラーに「○秒後に再試行」とあればその秒数で待機します。

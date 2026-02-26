@@ -2,6 +2,7 @@
 SNS投稿案生成ロジック: Gemini API と Google スプレッドシート（gspread）の操作
 """
 import os
+import re
 import json
 import time
 import traceback
@@ -18,10 +19,35 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
+# Gemini レート制限対策: 前回リクエストからの最小間隔（秒）。環境変数 GEMINI_MIN_INTERVAL_SECONDS で変更可。
+_gemini_last_request_time = 0.0
+GEMINI_MIN_INTERVAL_DEFAULT = 7
+
 # 設定シート読み込みエラー用
 class SettingsSheetError(Exception):
     """設定シートの読み込みに失敗したときに使用"""
     pass
+
+
+def _wait_gemini_rate_limit():
+    """Gemini のレート制限を避けるため、前回リクエストから一定時間経過するまで待つ。"""
+    global _gemini_last_request_time
+    interval = float(os.environ.get("GEMINI_MIN_INTERVAL_SECONDS", GEMINI_MIN_INTERVAL_DEFAULT))
+    interval = max(1.0, min(interval, 120.0))
+    elapsed = time.monotonic() - _gemini_last_request_time
+    if elapsed < interval:
+        wait = interval - elapsed
+        print(f"[INFO] レート制限対策: {wait:.1f}秒待機します...")
+        time.sleep(wait)
+    _gemini_last_request_time = time.monotonic()
+
+
+def _parse_429_retry_seconds(error_message: str):
+    """429 エラーメッセージから再試行までの秒数を取り出す。"""
+    m = re.search(r"(\d+)(?:\.\d+)?\s*秒", error_message)
+    if m:
+        return min(120, max(10, int(float(m.group(1)))))
+    return None
 
 
 def _get_credentials():
@@ -162,17 +188,21 @@ def generate_posts(neta: str) -> dict:
 
     response = None
     last_error = None
-    for attempt in range(2):
+    max_attempts = 3
+    for attempt in range(max_attempts):
         try:
+            _wait_gemini_rate_limit()
             response = client.models.generate_content(model=model_name, contents=prompt)
             break
         except Exception as e:
             last_error = e
-            err_str = str(e).lower()
-            is_429 = "429" in err_str or "resourceexhausted" in type(e).__name__.lower()
-            if is_429 and attempt == 0:
-                wait_sec = 60
-                print(f"[WARN] Gemini レート制限(429)。{wait_sec}秒後に再試行します...")
+            err_str = str(e)
+            err_lower = err_str.lower()
+            is_429 = "429" in err_lower or "resourceexhausted" in type(e).__name__.lower()
+            if is_429 and attempt < max_attempts - 1:
+                wait_sec = _parse_429_retry_seconds(err_str) or (60 + attempt * 30)
+                wait_sec = min(120, wait_sec)
+                print(f"[WARN] Gemini レート制限(429)。{wait_sec}秒後に再試行します（{attempt + 1}/{max_attempts}）...")
                 time.sleep(wait_sec)
                 continue
             print(f"[ERROR] Gemini 生成エラー: {e}")
