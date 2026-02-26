@@ -9,7 +9,7 @@ from datetime import datetime
 
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
+from google import genai
 
 
 # スコープ
@@ -141,10 +141,8 @@ def generate_posts(neta: str) -> dict:
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません")
 
-    genai.configure(api_key=api_key)
-    # モデル名: gemini-2.0-flash は v1beta で利用可能。gemini-1.5-flash は 404 になる場合あり。
     model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-    model = genai.GenerativeModel(model_name)
+    client = genai.Client(api_key=api_key)
 
     prompt = f"""以下はSNS・ブログ用の投稿ネタです。このネタをもとに、次の3種類の投稿文を生成してください。
 
@@ -166,7 +164,7 @@ def generate_posts(neta: str) -> dict:
     last_error = None
     for attempt in range(2):
         try:
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(model=model_name, contents=prompt)
             break
         except Exception as e:
             last_error = e
@@ -193,8 +191,9 @@ def generate_posts(neta: str) -> dict:
             reason = "応答を取得できませんでした"
             if getattr(response, "prompt_feedback", None):
                 reason = str(response.prompt_feedback)
-            if response.candidates:
-                c = response.candidates[0]
+            candidates = getattr(response, "candidates", None)
+            if candidates and len(candidates) > 0:
+                c = candidates[0]
                 if getattr(c, "finish_reason", None):
                     reason = str(c.finish_reason)
             ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
