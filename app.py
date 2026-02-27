@@ -6,6 +6,7 @@ import base64
 import hmac
 import hashlib
 import os
+import threading
 import traceback
 
 from flask import Flask, request, abort
@@ -99,6 +100,43 @@ def _push_message(user_id: str, text: str) -> bool:
     return True
 
 
+def _process_message_event(user_id: str | None, user_text: str) -> None:
+    """
+    重い処理（スプレッドシート + Gemini 生成 + Push）をバックグラウンドで実行する。
+    Webhook ハンドラからはスレッドとして非同期に呼び出される。
+    """
+    try:
+        print("[処理開始] 1/3 スプレッドシート・設定の読み込み")
+        result = generate_posts(user_text)
+        print("[処理完了] 3/3 生成完了")
+
+        instagram = result.get("instagram", "")
+        line_text = result.get("line", "")
+        blog = result.get("blog", "")
+
+        if user_id:
+            _push_message(user_id, "【Instagram用】\n" + instagram)
+            _push_message(user_id, "【LINE用】\n" + line_text)
+            _push_message(user_id, "【ブログ用】\n" + blog)
+        else:
+            print("[WARN] userId が取得できません。結果を Push できません。")
+
+    except SettingsSheetError as e:
+        print(f"[ERROR] 設定シートエラー: {e}")
+        if user_id:
+            _push_message(user_id, "設定シートを確認してください。")
+    except Exception as e:
+        print(f"[ERROR] 生成エラー: {e}")
+        print(traceback.format_exc())
+        err_msg = str(e)
+        if "429" in err_msg or "割り当て" in err_msg or "resourceexhausted" in err_msg.lower():
+            push_msg = "リクエスト制限に達しました。しばらく（約1分）待ってからもう一度お試しください。"
+        else:
+            push_msg = "投稿案の生成中にエラーが発生しました。しばらくしてからもう一度お試しください。"
+        if user_id:
+            _push_message(user_id, push_msg)
+
+
 @app.route("/", methods=["GET"])
 def index():
     """ヘルスチェック用（Render の Live 確認など）。"""
@@ -124,6 +162,8 @@ def webhook():
     if not payload or "events" not in payload:
         return "OK", 200
 
+    # Webhook では重い処理をせず、すぐに 200 を返す。
+    # 実際の生成処理はバックグラウンドスレッドで行う。
     for event in payload["events"]:
         if event.get("type") != "message":
             continue
@@ -139,46 +179,18 @@ def webhook():
         if not user_text:
             continue
 
+        user_id = event.get("source", {}).get("userId")
+
         # 進捗表示: 受信直後に「生成を開始します。30秒ほどお待ちください...」を返信
         print("[受信] ネタを受信しました。即時返信を送ります。")
         reply_line(reply_token, ["生成を開始します。30秒ほどお待ちください..."])
 
-        # 処理後に結果を Push で送信（Reply は 1 回までなので進捗で使用済み）
-        try:
-            print("[処理開始] 1/3 スプレッドシート・設定の読み込み")
-            result = generate_posts(user_text)
-            print("[処理完了] 3/3 生成完了")
-
-            instagram = result.get("instagram", "")
-            line_text = result.get("line", "")
-            blog = result.get("blog", "")
-
-            user_id = event.get("source", {}).get("userId")
-            if user_id:
-                _push_message(user_id, "【Instagram用】\n" + instagram)
-                _push_message(user_id, "【LINE用】\n" + line_text)
-                _push_message(user_id, "【ブログ用】\n" + blog)
-            else:
-                print("[WARN] userId が取得できません。結果を Push できません。")
-
-        except SettingsSheetError as e:
-            print(f"[ERROR] 設定シートエラー: {e}")
-            _push_message(
-                event.get("source", {}).get("userId") or "",
-                "設定シートを確認してください。",
-            )
-        except Exception as e:
-            print(f"[ERROR] 生成エラー: {e}")
-            print(traceback.format_exc())
-            err_msg = str(e)
-            if "429" in err_msg or "割り当て" in err_msg or "resourceexhausted" in err_msg.lower():
-                push_msg = "リクエスト制限に達しました。しばらく（約1分）待ってからもう一度お試しください。"
-            else:
-                push_msg = "投稿案の生成中にエラーが発生しました。しばらくしてからもう一度お試しください。"
-            _push_message(
-                event.get("source", {}).get("userId") or "",
-                push_msg,
-            )
+        # 重い処理はバックグラウンドスレッドで実行（Webhook のタイムアウト回避）
+        threading.Thread(
+            target=_process_message_event,
+            args=(user_id, user_text),
+            daemon=True,
+        ).start()
 
     return "OK", 200
 
