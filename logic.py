@@ -11,6 +11,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
+from google.genai import types
 
 
 # スコープ
@@ -167,8 +168,13 @@ def generate_posts(neta: str) -> dict:
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません")
 
+    # モデル名と API バージョン（環境変数で上書き可能）
     model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
-    client = genai.Client(api_key=api_key)
+    api_version = os.environ.get("GEMINI_API_VERSION", "v1")
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(api_version=api_version),
+    )
 
     prompt = f"""以下はSNS・ブログ用の投稿ネタです。このネタをもとに、次の3種類の投稿文を生成してください。
 
