@@ -168,8 +168,8 @@ def generate_posts(neta: str) -> dict:
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません")
 
-    # モデル名（gemini-1.5-flash は v1/v1beta で 404 になるため、利用可能な gemini-2.0-flash をデフォルトに）
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    # モデル名（環境変数 GEMINI_MODEL で上書き可能）
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
     api_version = os.environ.get("GEMINI_API_VERSION", "v1beta")
     client = genai.Client(
         api_key=api_key,
