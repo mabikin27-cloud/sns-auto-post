@@ -77,8 +77,12 @@ def _get_credentials():
         raise
 
 
-def _get_persona(ws_settings):
-    """「設定」シートからペルソナ情報を取得する"""
+def _get_settings(ws_settings):
+    """
+    「設定」シートから A列＝項目名・B列＝内容 を読み、プロンプト用の文字列を返す。
+    1行目はヘッダー（A1 は空、B1 は「内容」など）、2行目以降がデータ。
+    B列はユーザーが自由に編集可能。
+    """
     try:
         all_values = ws_settings.get_all_values()
     except Exception as e:
@@ -89,30 +93,27 @@ def _get_persona(ws_settings):
         print("[ERROR] 設定シートが空です")
         raise SettingsSheetError("設定シートを確認してください")
 
-    # 1行目をヘッダーとして扱い、「ペルソナ」列を探す
-    headers = [str(h).strip() for h in all_values[0]]
-    persona_col = None
-    for i, h in enumerate(headers):
-        if "ペルソナ" in h or h == "persona":
-            persona_col = i
-            break
-
-    if persona_col is not None and len(all_values) > 1:
-        # 2行目以降のペルソナを結合して使用（複数行対応）
-        persona_parts = []
-        for row in all_values[1:]:
-            if len(row) > persona_col and row[persona_col].strip():
-                persona_parts.append(row[persona_col].strip())
-        if persona_parts:
-            return "\n".join(persona_parts)
-
-    # ヘッダーに「ペルソナ」が無い場合は A 列キー・B 列値形式を想定
+    # 2行目以降を A列=キー・B列=値 として読み、キーが空でない行だけ結合
+    lines = []
     for row in all_values[1:]:
-        if len(row) >= 2 and str(row[0]).strip() == "ペルソナ":
-            return str(row[1]).strip()
+        if len(row) >= 2:
+            key = str(row[0]).strip()
+            value = str(row[1]).strip()
+            if key:
+                lines.append(f"{key}: {value}" if value else key)
 
-    # デフォルト: 空で続行（ペルソナなしで生成）
-    return ""
+    if not lines:
+        return "（設定なし）"
+    return "\n".join(lines)
+
+
+def _get_persona(ws_settings):
+    """「設定」シートからペルソナ情報を取得する（後方互換用。_get_settings を推奨）"""
+    settings_text = _get_settings(ws_settings)
+    if not settings_text or settings_text == "（設定なし）":
+        return ""
+    # 従来はペルソナのみ返していたが、いまは設定全体を返す
+    return settings_text
 
 
 def generate_posts(neta: str) -> dict:
@@ -187,11 +188,11 @@ def generate_posts(neta: str) -> dict:
 【ネタ】
 {neta}
 
-【ペルソナ（ターゲット）】
-{persona if persona else "指定なし"}
+【設定】（専門家の役割・発信スタイル・禁止事項・ペルソナなど。この設定に従ってトーンや内容を調整してください）
+{persona if persona else "（設定なし）"}
 
 【出力形式】
-以下の3つを、必ず「## Instagram」」「## LINE」「## Blog」の見出しで区切って出力してください。
+以下の3つを、必ず「## Instagram」「## LINE」「## Blog」の見出しで区切って出力してください。
 - Instagram用: 短文・ハッシュタグ含む・インスタ向けトーン
 - LINE用: 友だち向けのカジュアルな短文（改行可）
 - ブログ用: やや長めの読みやすい文章（2〜3文程度）
