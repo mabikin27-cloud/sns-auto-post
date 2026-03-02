@@ -1,6 +1,6 @@
 """
 LINE Webhook サーバー（Flask）
-ネタ送信 → スプレッドシートで確認する設計。LINE には開始・完了（またはエラー）のみ通知する。
+ネタ送信 → スプレッドシートに記録し、生成した 3 形式（Instagram / LINE / ブログ用）を LINE にも送信する。
 """
 import base64
 import hmac
@@ -103,15 +103,24 @@ def _push_message(user_id: str, text: str) -> bool:
 def _process_message_event(user_id: str | None, user_text: str) -> None:
     """
     重い処理（スプレッドシート + Gemini 生成）をバックグラウンドで実行する。
-    結果はスプレッドシートにのみ記録し、LINE には完了またはエラーのみ 1 通 Push する。
+    結果をスプレッドシートに記録し、生成した 3 形式を LINE に Push で送信する。
     """
     try:
         print("[処理開始] 1/3 スプレッドシート・設定の読み込み")
-        generate_posts(user_text)
+        result = generate_posts(user_text)
         print("[処理完了] 3/3 生成完了")
 
+        instagram = result.get("instagram", "")
+        line_text = result.get("line", "")
+        blog = result.get("blog", "")
+
         if user_id:
-            _push_message(user_id, "生成が完了しました。スプレッドシートでご確認ください。")
+            _push_message(user_id, "生成が完了しました。")
+            _push_message(user_id, "【Instagram用】\n" + instagram)
+            _push_message(user_id, "【LINE用】\n" + line_text)
+            _push_message(user_id, "【ブログ用】\n" + blog)
+        else:
+            print("[WARN] userId が取得できません。結果を Push できません。")
 
     except SettingsSheetError as e:
         print(f"[ERROR] 設定シートエラー: {e}")
