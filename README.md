@@ -69,9 +69,11 @@ LINE の Webhook URL に `https://あなたのサービス名.onrender.com/webho
 
 設定シートが読めない場合は「設定シートを確認してください。」と LINE で通知します。
 
-## 429 エラー（レート制限）
+## 429 エラー（レート制限）・404 エラー（モデルなし）
 
 「現在の割り当てを超えました」と出る場合は、Gemini API の無料枠の制限に達しています。約1分待ってから再度送信してください。429 のときは 1 回だけ 60 秒後に自動で再試行します。詳細は https://ai.google.dev/gemini-api/docs/rate-limits を参照してください。
 
 - **リクエスト間隔**: 前回から 7 秒経過するまで待ってから Gemini を呼び出します。`GEMINI_MIN_INTERVAL_SECONDS` で変更可（例: 10 で約 6 RPM）。
 - **429 時**: 最大 3 回まで再試行。エラーに「○秒後に再試行」とあればその秒数で待機します。
+- **404 時（モデルが見つからない）**: デフォルトで `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-2.0-flash` の順にフォールバックします。環境変数 `GEMINI_MODEL_FALLBACK` にカンマ区切りでモデル名を指定するとその順で試します（例: `gemini-2.5-flash-lite,gemini-2.5-flash`）。
+- **堂々巡りを避けるには**: 無料枠だけでは 429 が続く場合があります。[Google AI Studio](https://aistudio.google.com/) で**課金を有効**にすると割り当てが増え、安定して利用できます。

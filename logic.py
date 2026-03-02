@@ -168,8 +168,14 @@ def generate_posts(neta: str) -> dict:
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません")
 
-    # モデル名（1.5-flash 系は 404 のため、利用可能な gemini-2.0-flash をデフォルトに。環境変数で上書き可）
-    model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    # モデル: 2.5 系を優先（無料枠で利用可能）。404 の場合はフォールバックリストで次を試す。
+    default_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+    model_list_str = os.environ.get("GEMINI_MODEL_FALLBACK")
+    if model_list_str:
+        default_models = [m.strip() for m in model_list_str.split(",") if m.strip()]
+    elif os.environ.get("GEMINI_MODEL"):
+        default_models = [os.environ.get("GEMINI_MODEL")]
+
     api_version = os.environ.get("GEMINI_API_VERSION", "v1beta")
     client = genai.Client(
         api_key=api_key,
@@ -194,27 +200,51 @@ def generate_posts(neta: str) -> dict:
 
     response = None
     last_error = None
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            _wait_gemini_rate_limit()
-            response = client.models.generate_content(model=model_name, contents=prompt)
+    model_index = 0
+    max_models = len(default_models)
+    max_attempts_per_model = 3
+
+    while model_index < max_models:
+        model_name = default_models[model_index]
+        next_model_due_to_404 = False
+        for attempt in range(max_attempts_per_model):
+            try:
+                _wait_gemini_rate_limit()
+                response = client.models.generate_content(model=model_name, contents=prompt)
+                break
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                err_lower = err_str.lower()
+                is_404 = "404" in err_lower or "not_found" in err_lower
+                is_429 = "429" in err_lower or "resourceexhausted" in type(e).__name__.lower()
+
+                if is_404 and model_index < max_models - 1:
+                    print(f"[WARN] モデル {model_name} は 404 のため、次のモデルを試します...")
+                    model_index += 1
+                    next_model_due_to_404 = True
+                    break
+                if is_429 and attempt < max_attempts_per_model - 1:
+                    wait_sec = _parse_429_retry_seconds(err_str) or (60 + attempt * 30)
+                    wait_sec = min(120, wait_sec)
+                    print(f"[WARN] Gemini レート制限(429)。{wait_sec}秒後に再試行します（{model_name}）...")
+                    time.sleep(wait_sec)
+                    continue
+                print(f"[ERROR] Gemini 生成エラー: {e}")
+                print(traceback.format_exc())
+                ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
+                raise
+        if response is not None:
             break
-        except Exception as e:
-            last_error = e
-            err_str = str(e)
-            err_lower = err_str.lower()
-            is_429 = "429" in err_lower or "resourceexhausted" in type(e).__name__.lower()
-            if is_429 and attempt < max_attempts - 1:
-                wait_sec = _parse_429_retry_seconds(err_str) or (60 + attempt * 30)
-                wait_sec = min(120, wait_sec)
-                print(f"[WARN] Gemini レート制限(429)。{wait_sec}秒後に再試行します（{attempt + 1}/{max_attempts}）...")
-                time.sleep(wait_sec)
-                continue
-            print(f"[ERROR] Gemini 生成エラー: {e}")
-            print(traceback.format_exc())
+        if not next_model_due_to_404:
+            model_index += 1
+    else:
+        if last_error:
+            print(f"[ERROR] すべてのモデルで失敗: {last_error}")
             ws_posts.update_cell(added_row_index, 3, "エラー: 生成失敗")
-            raise
+            raise last_error
+        raise ValueError("Gemini から応答がありませんでした")
+
     if response is None:
         raise last_error or ValueError("Gemini から応答がありませんでした")
 
